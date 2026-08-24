@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bali Harian</title>
 <meta name="description" content="Agenda, la compra en Bali y control de gastos. Todo se guarda en tu movil.">
-<meta name="theme-color" content="#0C6B59">
+<meta name="theme-color" content="#1A5FA8">
 
 <!-- para que al instalarla en el iPhone se abra a pantalla completa -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -24,61 +24,61 @@
 
 <style>
 :root{
-  --bg:#EFF3F0;
+  --bg:#FAFAFA;
   --surface:#FFFFFF;
-  --surface-2:#E4EBE6;
-  --ink:#131D18;
-  --ink-2:#3D4C46;
-  --muted:#5F6E66;
-  --line:#DCE4DE;
-  --line-2:#BECABF;
+  --surface-2:#EDEEEF;
+  --ink:#14181B;
+  --ink-2:#3D444A;
+  --muted:#616A72;      /* 5,5:1 sobre blanco */
+  --line:#E4E5E6;
+  --line-2:#C9CBCD;
 
-  --accent:#0C6B59;
+  --accent:#1A5FA8;     /* azul: botones, pestana activa, habitos */
   --accent-ink:#FFFFFF;
-  --accent-soft:#D8EAE4;
-  --amber:#9A6008;
+  --accent-soft:#DEEAF7;
+  --amber:#8F5A08;
   --amber-soft:#FAEBD3;
   --pos:#1F6B41;
   --pos-soft:#DCEEE2;
   --neg:#A3392A;
   --neg-soft:#F9E2DD;
-  --info:#1A5E80;
-  --info-soft:#DCEAF2;
+  --info:#0E7286;       /* turquesa: el tiempo. Distinto del azul del acento */
+  --info-soft:#D8EFF3;
   --plum:#6B3F6E;
   --plum-soft:#F0E2F1;
 
   --radius:13px;
   --radius-sm:9px;
-  --shadow:0 1px 2px rgba(19,29,24,.06);
-  --shadow-2:0 2px 10px rgba(19,29,24,.08);
+  --shadow:0 1px 2px rgba(20,24,27,.06);
+  --shadow-2:0 2px 10px rgba(20,24,27,.09);
   --font-d:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;
   --font-b:"Instrument Sans",system-ui,-apple-system,sans-serif;
   --font-m:"IBM Plex Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --bg:#0C1512; --surface:#16211D; --surface-2:#1F2C27;
-    --ink:#E8EFEA; --ink-2:#B2C1BA; --muted:#82948C;
-    --line:#26332E; --line-2:#36473F;
-    --accent:#3FBFA1; --accent-ink:#06211B; --accent-soft:#123430;
+    --bg:#0E1113; --surface:#181C1F; --surface-2:#22272B;
+    --ink:#E9ECEE; --ink-2:#B4BCC2; --muted:#858E96;
+    --line:#282D31; --line-2:#3A4046;
+    --accent:#5AA6EE; --accent-ink:#06192B; --accent-soft:#132B44;
     --amber:#E2A950; --amber-soft:#33270F;
     --pos:#4FC087; --pos-soft:#0F2E1F;
     --neg:#E4735C; --neg-soft:#3B211C;
-    --info:#5BB2DA; --info-soft:#102C3A;
+    --info:#43BCD0; --info-soft:#0C2E34;
     --plum:#C08CC4; --plum-soft:#2C1B2E;
     --shadow:0 1px 2px rgba(0,0,0,.32);
     --shadow-2:0 2px 10px rgba(0,0,0,.4);
   }
 }
 :root[data-theme="dark"]{
-  --bg:#0C1512; --surface:#16211D; --surface-2:#1F2C27;
-  --ink:#E8EFEA; --ink-2:#B2C1BA; --muted:#82948C;
-  --line:#26332E; --line-2:#36473F;
-  --accent:#3FBFA1; --accent-ink:#06211B; --accent-soft:#123430;
+  --bg:#0E1113; --surface:#181C1F; --surface-2:#22272B;
+  --ink:#E9ECEE; --ink-2:#B4BCC2; --muted:#858E96;
+  --line:#282D31; --line-2:#3A4046;
+  --accent:#5AA6EE; --accent-ink:#06192B; --accent-soft:#132B44;
   --amber:#E2A950; --amber-soft:#33270F;
   --pos:#4FC087; --pos-soft:#0F2E1F;
   --neg:#E4735C; --neg-soft:#3B211C;
-  --info:#5BB2DA; --info-soft:#102C3A;
+  --info:#43BCD0; --info-soft:#0C2E34;
   --plum:#C08CC4; --plum-soft:#2C1B2E;
   --shadow:0 1px 2px rgba(0,0,0,.32);
   --shadow-2:0 2px 10px rgba(0,0,0,.4);
@@ -277,7 +277,7 @@ select.inp{
 
 /* ---------- hoja modal ---------- */
 .sheet-bg{
-  position:fixed;inset:0;z-index:60;background:rgba(9,18,15,.44);
+  position:fixed;inset:0;z-index:60;background:rgba(12,15,17,.46);
   display:flex;align-items:flex-end;justify-content:center;
   -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);
   animation:fade .16s ease;
@@ -324,7 +324,7 @@ select.inp{
 .sug{
   position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;
   background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);
-  box-shadow:0 8px 22px rgba(9,18,15,.16);overflow:hidden;max-height:236px;overflow-y:auto;
+  box-shadow:0 8px 22px rgba(12,15,17,.16);overflow:hidden;max-height:236px;overflow-y:auto;
 }
 .sug button{display:flex;width:100%;align-items:center;gap:9px;padding:8px 11px;text-align:left;border-bottom:1px solid var(--line)}
 .sug button:last-child{border-bottom:none}
@@ -417,7 +417,7 @@ select.inp{
   background:var(--ink);color:var(--bg);
   padding:9px 9px 9px 13px;border-radius:99px;
   font-size:13px;font-weight:600;
-  box-shadow:0 4px 18px rgba(9,18,15,.34);
+  box-shadow:0 4px 18px rgba(12,15,17,.34);
   animation:rise .24s ease;
 }
 .upd span{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -429,14 +429,14 @@ select.inp{
   position:fixed;left:50%;transform:translateX(-50%);
   bottom:calc(88px + env(safe-area-inset-bottom,0px));z-index:80;
   background:var(--ink);color:var(--bg);padding:9px 15px;border-radius:99px;
-  font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(9,18,15,.3);
+  font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(12,15,17,.3);
   animation:rise .2s ease;max-width:88vw;text-align:center;
 }
 .fab{
   position:fixed;right:calc(50% - 270px + 12px);z-index:45;
   bottom:calc(76px + env(safe-area-inset-bottom,0px));
   width:48px;height:48px;border-radius:50%;background:var(--accent);color:var(--accent-ink);
-  display:grid;place-items:center;box-shadow:0 4px 14px rgba(12,107,89,.36);
+  display:grid;place-items:center;box-shadow:0 4px 14px rgba(20,24,27,.28);
 }
 @media (max-width:564px){.fab{right:12px}}
 </style>
@@ -3584,7 +3584,7 @@ else arrancar();
 
 </script>
 <script>
-window.VERSION_APP = '20260824-191559';
+window.VERSION_APP = '20260824-192152';
 // El service worker es lo que hace que la app abra sin internet y lo que avisa
 // de que hay version nueva. La logica esta en la app (vigilarActualizaciones).
 if ('serviceWorker' in navigator) {
