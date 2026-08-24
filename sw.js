@@ -1,6 +1,6 @@
-/* Bali Harian - service worker. Version: 20260824-185349
+/* Bali Harian - service worker. Version: 20260824-191559
    Guarda la app entera para que abra sin conexion. */
-var CACHE = 'bali-harian-20260824-185349';
+var CACHE = 'bali-harian-20260824-191559';
 var ESENCIALES = [
   './', './index.html', './manifest.webmanifest',
   './icon-180.png', './icon-192.png', './icon-512.png',
@@ -26,12 +26,19 @@ function guardarTipografias(cache) {
   }).catch(function () { /* sin conexion se guardaran mas adelante */ });
 }
 
+/* Sin skipWaiting: la version nueva espera y la app avisa al usuario. Asi no se
+   le cambia la pantalla de debajo de las manos mientras esta apuntando algo. */
 self.addEventListener('install', function (e) {
   e.waitUntil(
     caches.open(CACHE).then(function (c) {
       return c.addAll(ESENCIALES).then(function () { return guardarTipografias(c); });
-    }).then(function () { return self.skipWaiting(); })
+    })
   );
+});
+
+// La app pide el cambio cuando el usuario toca "Actualizar".
+self.addEventListener('message', function (e) {
+  if (e.data === 'actualiza') self.skipWaiting();
 });
 
 self.addEventListener('activate', function (e) {

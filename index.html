@@ -408,6 +408,23 @@ select.inp{
 .frase:first-child{border-top:none}
 .frase b{font-family:var(--font-d);font-weight:600;font-size:14.5px;color:var(--amber)}
 .frase span{font-size:11.5px;color:var(--muted)}
+/* aviso de version nueva */
+.upd{
+  position:fixed;left:10px;right:10px;z-index:78;
+  bottom:calc(76px + env(safe-area-inset-bottom,0px));
+  max-width:520px;margin:0 auto;
+  display:flex;align-items:center;gap:8px;
+  background:var(--ink);color:var(--bg);
+  padding:9px 9px 9px 13px;border-radius:99px;
+  font-size:13px;font-weight:600;
+  box-shadow:0 4px 18px rgba(9,18,15,.34);
+  animation:rise .24s ease;
+}
+.upd span{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upd svg{flex:none}
+.upd .btn{background:var(--bg);border-color:var(--bg);color:var(--ink);flex:none}
+.upd .icon-btn{background:none;border-color:transparent;color:var(--bg);opacity:.7;width:26px;height:26px}
+
 .toast{
   position:fixed;left:50%;transform:translateX(-50%);
   bottom:calc(88px + env(safe-area-inset-bottom,0px));z-index:80;
@@ -1318,6 +1335,14 @@ function encogerImagen(file, maxLado, calidad) {
     img.onerror = () => { URL.revokeObjectURL(url); mal(new Error('no es una imagen')); };
     img.src = url;
   });
+}
+
+// La versión es la fecha del build (20260824-185349): se enseña en cristiano.
+function versionLegible() {
+  const v = window.VERSION_APP || '';
+  const m = v.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
+  if (!m) return 'desarrollo';
+  return +m[3] + ' de ' + MESES[+m[2] - 1] + ' de ' + m[1] + ', ' + m[4] + ':' + m[5];
 }
 
 /* ---------------------------- avisos ---------------------------- */
@@ -3163,6 +3188,10 @@ function sheetAjustes() {
     '<div class="note" style="margin-top:16px">' + (almacenOK
       ? 'Guardado automático: <b style="color:var(--pos)">funcionando</b>.'
       : '<b style="color:var(--neg)">Ojo:</b> este navegador no me deja guardar nada. Los cambios se perderán al cerrar. Prueba a abrirlo fuera del modo privado.') + '</div>' +
+    '<div class="sec-h" style="margin-top:22px"><h2>Versión</h2></div>' +
+    '<div class="card pad" style="margin-bottom:8px"><div class="note">Tienes la del <b class="cif" style="color:var(--ink)">' +
+      esc(versionLegible()) + '</b>. Se actualiza sola: cuando hay una nueva te avisa abajo.</div></div>' +
+    '<button class="btn btn-w" id="aUpd">Buscar actualización ahora</button>' +
     '<div style="height:8px"></div>' +
     '<button class="btn btn-danger btn-w" id="aWipe" style="margin-top:12px">Borrar todo y empezar de cero</button>';
 
@@ -3186,6 +3215,17 @@ function sheetAjustes() {
     };
     $('#aExp').onclick = exportar;
     $('#aCsv').onclick = exportarCsv;
+    $('#aUpd').onclick = async () => {
+      if (!regSW) { toast('Ábrela desde la pantalla de inicio para esto'); return; }
+      toast('Mirando…');
+      try {
+        await regSW.update();
+        setTimeout(() => {
+          if (regSW.waiting) { cerrarSheet(); avisoVersion(); }
+          else toast('Ya tienes la última');
+        }, 1200);
+      } catch (e) { toast('Sin conexión ahora mismo'); }
+    };
     $('#aCopy').onclick = () => {
       const txt = JSON.stringify(S);
       if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast('Copiado')).catch(() => toast('No he podido copiar'));
@@ -3255,6 +3295,74 @@ function exportarCsv() {
   ).join('\r\n');
   return descargar('gastos-' + hoyIso() + '.csv', csv, 'text/csv;charset=utf-8');
 }
+
+/* ---------------------------- versión nueva ----------------------------
+   Una app instalada se queda con la copia que tiene guardada. Cuando hay una
+   versión nueva esperando, se avisa y se cambia sólo si el usuario quiere.
+   ---------------------------------------------------------------------- */
+
+let regSW = null;
+let recargando = false;
+
+function avisoVersion() {
+  if ($('#updBar')) return;
+  const b = document.createElement('div');
+  b.id = 'updBar';
+  b.className = 'upd';
+  b.innerHTML =
+    '<span style="flex:1;min-width:0">' + ico('racha', 15) + ' Hay una versión nueva</span>' +
+    '<button class="btn btn-sm" id="updYa">Actualizar</button>' +
+    '<button class="icon-btn" id="updNo" aria-label="Ahora no">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+    '</button>';
+  document.body.appendChild(b);
+  $('#updYa').onclick = aplicarVersion;
+  $('#updNo').onclick = () => b.remove();
+}
+
+function aplicarVersion() {
+  const esperando = regSW && regSW.waiting;
+  const bar = $('#updBar');
+  if (bar) bar.innerHTML = '<span style="flex:1">Actualizando…</span>';
+  guardarYa();
+  if (esperando) {
+    esperando.postMessage('actualiza');
+    setTimeout(() => { if (!recargando) { recargando = true; location.reload(); } }, 1800);
+  } else {
+    recargando = true;
+    location.reload();
+  }
+}
+
+function vigilarActualizaciones(reg) {
+  regSW = reg;
+
+  // el navegador cambia de service worker -> la página ya es la nueva
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (recargando) return;
+    recargando = true;
+    location.reload();
+  });
+
+  if (reg.waiting && navigator.serviceWorker.controller) avisoVersion();
+
+  reg.addEventListener('updatefound', () => {
+    const nuevo = reg.installing;
+    if (!nuevo) return;
+    nuevo.addEventListener('statechange', () => {
+      // sin controller es la primera instalación: no hay nada que avisar
+      if (nuevo.state === 'installed' && navigator.serviceWorker.controller) avisoVersion();
+    });
+  });
+
+  // mirar si hay novedades al abrir y cada vez que se vuelve a la app
+  const mirar = () => { try { reg.update(); } catch (e) {} };
+  setTimeout(mirar, 3000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') mirar();
+  });
+}
+window.vigilarActualizaciones = vigilarActualizaciones;
 
 /* ---------------------------- internet ---------------------------- */
 
@@ -3476,10 +3584,14 @@ else arrancar();
 
 </script>
 <script>
-// El service worker es lo que hace que la app abra sin internet.
+window.VERSION_APP = '20260824-191559';
+// El service worker es lo que hace que la app abra sin internet y lo que avisa
+// de que hay version nueva. La logica esta en la app (vigilarActualizaciones).
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () { /* sin conexion la primera vez */ });
+    navigator.serviceWorker.register('sw.js')
+      .then(function (reg) { if (window.vigilarActualizaciones) window.vigilarActualizaciones(reg); })
+      .catch(function () { /* sin conexion la primera vez */ });
   });
 }
 </script>
