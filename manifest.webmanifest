@@ -1,0 +1,17 @@
+{
+  "name": "Bali Harian",
+  "short_name": "Bali Harian",
+  "description": "Agenda, la compra en Bali y control de gastos. Todo se guarda en tu movil.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0C6B59",
+  "theme_color": "#0C6B59",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
