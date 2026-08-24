@@ -3320,7 +3320,7 @@ function avisoVersion() {
   $('#updNo').onclick = () => b.remove();
 }
 
-function aplicarVersion() {
+async function aplicarVersion() {
   const esperando = regSW && regSW.waiting;
   const bar = $('#updBar');
   if (bar) bar.innerHTML = '<span style="flex:1">Actualizando…</span>';
@@ -3328,10 +3328,29 @@ function aplicarVersion() {
   if (esperando) {
     esperando.postMessage('actualiza');
     setTimeout(() => { if (!recargando) { recargando = true; location.reload(); } }, 1800);
-  } else {
-    recargando = true;
-    location.reload();
+    return;
   }
+  // Sin nada esperando: se tira la copia guardada para que la recarga traiga
+  // todo de nuevo. Es el último recurso, pero no deja a nadie atascado.
+  recargando = true;
+  try {
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => caches.delete(k)));
+  } catch (e) {}
+  location.reload();
+}
+
+/* Red de seguridad: preguntar al servidor qué versión hay, sin pasar por
+   ninguna copia guardada. Si no coincide con la que corre, se avisa aunque el
+   mecanismo normal del navegador haya fallado. */
+async function comprobarVersionServidor() {
+  if (!navigator.onLine || !window.VERSION_APP) return;
+  try {
+    const r = await fetch('sw.js?v=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const m = (await r.text()).match(/bali-harian-([0-9-]+)/);
+    if (m && m[1] !== window.VERSION_APP) avisoVersion();
+  } catch (e) { /* sin conexión, ya se mirará */ }
 }
 
 function vigilarActualizaciones(reg) {
@@ -3356,8 +3375,8 @@ function vigilarActualizaciones(reg) {
   });
 
   // mirar si hay novedades al abrir y cada vez que se vuelve a la app
-  const mirar = () => { try { reg.update(); } catch (e) {} };
-  setTimeout(mirar, 3000);
+  const mirar = () => { try { reg.update(); } catch (e) {} comprobarVersionServidor(); };
+  setTimeout(mirar, 2500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') mirar();
   });
@@ -3584,12 +3603,14 @@ else arrancar();
 
 </script>
 <script>
-window.VERSION_APP = '20260824-192152';
+window.VERSION_APP = '20260824-193402';
 // El service worker es lo que hace que la app abra sin internet y lo que avisa
 // de que hay version nueva. La logica esta en la app (vigilarActualizaciones).
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js')
+    // updateViaCache 'none': si no, el navegador puede reutilizar el sw.js
+    // guardado y tardar en enterarse de que hay version nueva.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
       .then(function (reg) { if (window.vigilarActualizaciones) window.vigilarActualizaciones(reg); })
       .catch(function () { /* sin conexion la primera vez */ });
   });

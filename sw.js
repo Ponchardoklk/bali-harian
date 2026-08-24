@@ -1,6 +1,6 @@
-/* Bali Harian - service worker. Version: 20260824-192152
+/* Bali Harian - service worker. Version: 20260824-193402
    Guarda la app entera para que abra sin conexion. */
-var CACHE = 'bali-harian-20260824-192152';
+var CACHE = 'bali-harian-20260824-193402';
 var ESENCIALES = [
   './', './index.html', './manifest.webmanifest',
   './icon-180.png', './icon-192.png', './icon-512.png',
