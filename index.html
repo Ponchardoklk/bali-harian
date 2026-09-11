@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bali Harian</title>
-<meta name="description" content="Agenda, la compra en Bali y control de gastos. Todo se guarda en tu movil.">
+<meta name="description" content="Agenda, la compra en Bali y control de gastos, compartido entre los dos moviles.">
 <meta name="theme-color" content="#1A5FA8">
 
 <!-- para que al instalarla en el iPhone se abra a pantalla completa -->
@@ -686,11 +686,16 @@ function cargar() {
 
 let guardarPend = null;
 
+function guardarLocal() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); }
+  catch (e) { almacenOK = false; }
+}
+
 function guardarYa() {
   clearTimeout(guardarPend);
   guardarPend = null;
-  try { localStorage.setItem(KEY, JSON.stringify(S)); }
-  catch (e) { almacenOK = false; }
+  guardarLocal();
+  empujar();
 }
 
 function guardar() {
@@ -707,6 +712,388 @@ document.addEventListener('visibilitychange', () => {
 });
 
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+
+/* ==========================================================================
+   Sincronización — los dos móviles, las mismas cosas
+   --------------------------------------------------------------------------
+   Cada gasto, cada evento y cada cosa de la lista viaja por separado, con la
+   hora de su último cambio. Si uno apunta un gasto mientras el otro tacha la
+   leche en la compra, se mezcla pieza a pieza y no se pierde nada. Mandar el
+   bloque entero sería la mitad de código y borraría lo del otro cada vez que
+   coincidierais, que es el fallo clásico de estas apps a medias.
+
+   Si esta copia corre donde no hay almacén compartido, no pasa nada: funciona
+   sola contra el móvil, igual que siempre.
+   ========================================================================== */
+
+/* Lo que viaja. Las fotos no: la imagen vive en otro almacén del propio
+   teléfono y pesa demasiado. Mandar sólo el nombre dejaría fichas sin foto en
+   el otro móvil, que es peor que no tenerlas. */
+const COLS = ['movs', 'eventos', 'tareas', 'lista', 'plantillas', 'recur', 'metas', 'notas', 'sitios', 'habitos'];
+const AJUSTES_SYNC = ['fx', 'fxAuto', 'presupuestoComida', 'visado', 'moto', 'lugar', 'precios', 'fxTocado'];
+const AL_FRENTE = { notas: 1, tareas: 1 };   // estas dos se leen de lo nuevo a lo viejo
+
+let DB = null;
+let sincro = 'sola';        // sola | conectando | ok | error
+let sincroDetalle = '';
+let quien = '';             // tu nombre, para que el otro sepa quién apuntó qué
+let marcas = {};            // clave -> hora del último cambio que conocemos
+let huellas = {};           // clave -> cómo era la última vez que la vimos
+let cola = {};              // lo que falta por mandar; aguanta quedarse sin cobertura
+let paradas = [];
+let primeraVuelta = true;
+let faltanPrimeras = 0;
+let avisoPend = null, hanTocado = {};
+let reintento = null, tandaPend = null;
+
+/* Misma pieza, mismo texto, aunque las claves vengan en otro orden. Sin esto,
+   abrir la app volvería a mandarlo todo cada vez. */
+function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+function huella(v) {
+  const s = canon(v);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h.toString(36);
+}
+
+function cargarSincro() {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY + '.sync') || '{}');
+    marcas = d.marcas && typeof d.marcas === 'object' ? d.marcas : {};
+    huellas = d.huellas && typeof d.huellas === 'object' ? d.huellas : {};
+    cola = d.cola && typeof d.cola === 'object' ? d.cola : {};
+    quien = typeof d.quien === 'string' ? d.quien : '';
+  } catch (e) {}
+}
+
+function guardarSincro() {
+  try { localStorage.setItem(KEY + '.sync', JSON.stringify({ marcas, huellas, cola, quien })); } catch (e) {}
+}
+
+/* ------------------------- mandar lo que cambia ------------------------- */
+
+/* Mira qué ha cambiado en este móvil desde la última vez y lo deja en la cola. */
+function empujar() {
+  if (!DB) return;
+  const ahora = Date.now();
+  const vivas = {};
+  let hay = false;
+
+  COLS.forEach(col => {
+    (S[col] || []).forEach(it => {
+      if (!it || !it.id) return;
+      const k = col + '/' + it.id;
+      vivas[k] = true;
+      const h = huella(it);
+      if (huellas[k] === h) return;
+      huellas[k] = h;
+      marcas[k] = ahora;
+      cola[k] = { d: it, ts: ahora, por: quien };
+      hay = true;
+    });
+  });
+
+  /* Lo que teníamos fichado y ya no está: lo has borrado tú. Se manda una marca
+     de borrado en vez de quitar el documento — si desapareciera sin más, el otro
+     móvil lo volvería a subir creyendo que es nuevo y reaparecería solo. */
+  Object.keys(huellas).forEach(k => {
+    if (vivas[k] || k.indexOf('ajustes/') === 0) return;
+    delete huellas[k];
+    marcas[k] = ahora;
+    cola[k] = { borrado: true, ts: ahora, por: quien };
+    hay = true;
+  });
+
+  AJUSTES_SYNC.forEach(a => {
+    const k = 'ajustes/' + a;
+    const v = S[a] === undefined ? null : S[a];
+    const h = huella(v);
+    if (huellas[k] === h) return;
+    huellas[k] = h;
+    marcas[k] = ahora;
+    cola[k] = { d: v, ts: ahora, por: quien };
+    hay = true;
+  });
+
+  if (hay) { guardarSincro(); vaciarCola(); }
+}
+
+/* De 25 en 25: la primera subida de un histórico entero son cientos de piezas
+   y el almacén corta si le llegan todas de golpe. */
+function vaciarCola() {
+  if (!DB || tandaPend) return;
+  clearTimeout(reintento);
+  const claves = Object.keys(cola);
+  if (!claves.length) { pintarSincro(); return; }
+
+  const tanda = claves.slice(0, 25);
+  let quedan = tanda.length, malo = null;
+  tandaPend = true;
+
+  const fin = () => {
+    if (--quedan > 0) return;
+    tandaPend = null;
+    guardarSincro();
+    if (malo) {
+      sincro = 'error';
+      sincroDetalle = malo === 'resource_exhausted' ? 'va con cola' : 'sin conexión';
+      pintarSincro();
+      reintento = setTimeout(vaciarCola, malo === 'resource_exhausted' ? 3000 : 8000);
+      return;
+    }
+    if (Object.keys(cola).length) { setTimeout(vaciarCola, 250); return; }
+    sincro = 'ok'; sincroDetalle = '';
+    pintarSincro();
+  };
+
+  tanda.forEach(k => {
+    const cuerpo = cola[k];
+    DB.doc(k).set(cuerpo).then(() => {
+      if (cola[k] === cuerpo) delete cola[k];   // si ha vuelto a cambiar, que se mande otra vez
+      fin();
+    }).catch(err => {
+      const c = err && err.code;
+      if (c === 'invalid_argument' || c === 'quota_exceeded' || c === 'revoked') {
+        // Reintentar esto no arregla nada y atasca todo lo demás.
+        if (cola[k] === cuerpo) delete cola[k];
+        sincro = 'error';
+        sincroDetalle = c === 'quota_exceeded' ? 'el almacén está lleno' : 'una pieza no ha entrado';
+      } else {
+        malo = c || 'red';
+      }
+      fin();
+    });
+  });
+}
+
+/* ------------------------- recibir lo del otro ------------------------- */
+
+function escuchar() {
+  const guarda = (u) => { if (typeof u === 'function') paradas.push(u); };
+  faltanPrimeras = COLS.length + 1;
+
+  COLS.forEach(col => guarda(DB.collection(col).onSnapshot(
+    snap => { aplicar(col, snap.docChanges()); primera(); },
+    err => falloEscucha(err)
+  )));
+  guarda(DB.collection('ajustes').onSnapshot(
+    snap => { aplicarAjustes(snap.docChanges()); primera(); },
+    err => falloEscucha(err)
+  ));
+
+  // Red de seguridad: si alguna colección no contesta, no nos quedamos en
+  // "conectando" para siempre.
+  setTimeout(() => { if (primeraVuelta) { faltanPrimeras = 0; primera(); } }, 4000);
+}
+
+function primera() {
+  if (!primeraVuelta) return;
+  if (faltanPrimeras > 0 && --faltanPrimeras > 0) return;
+  primeraVuelta = false;
+  sincro = 'ok';
+  guardarLocal();
+  guardarSincro();
+  render();
+  empujar();
+  if (!quien) setTimeout(() => { if (!$('#sheetHost').innerHTML) sheetSincro(); }, 900);
+}
+
+function aplicar(col, cambios) {
+  let toco = false, reenviar = false;
+
+  cambios.forEach(c => {
+    if (c.type === 'removed') return;          // aquí no se borra nada: hay marca de borrado
+    const id = c.doc.id, k = col + '/' + id, d = c.doc.data() || {};
+    const ts = +d.ts || 0;
+    if (ts <= (marcas[k] || 0)) return;        // lo de este móvil es igual o más nuevo
+
+    const lista = S[col] || (S[col] = []);
+    const i = lista.findIndex(x => x && x.id === id);
+
+    if (d.borrado) {
+      if (i >= 0) { lista.splice(i, 1); toco = true; }
+      delete huellas[k];
+      marcas[k] = ts;
+      anota(d.por);
+      return;
+    }
+
+    if (!d.d || typeof d.d !== 'object' || Array.isArray(d.d)) return;
+    let it = Object.assign({}, d.d, { id: id });
+    const talCual = huella(it);
+
+    /* Los días marcados se suman, no se sustituyen: si cada uno marca un día
+       distinto del mismo hábito, tienen que quedar los dos. */
+    if (i >= 0 && Array.isArray(lista[i].hechos) && Array.isArray(it.hechos)) {
+      const union = lista[i].hechos.slice();
+      it.hechos.forEach(x => { if (union.indexOf(x) < 0) union.push(x); });
+      it.hechos = union;
+    }
+
+    if (i >= 0) lista[i] = it;
+    else if (AL_FRENTE[col]) lista.unshift(it);
+    else lista.push(it);
+
+    marcas[k] = ts;
+    const fundido = huella(it);
+    if (fundido === talCual) huellas[k] = fundido;
+    else { huellas[k] = talCual; reenviar = true; }   // la mezcla hay que devolvérsela
+    toco = true;
+    anota(d.por);
+  });
+
+  if (toco) tras();
+  if (reenviar) empujar();
+}
+
+function valeAjuste(a, v) {
+  if (a === 'fx' || a === 'presupuestoComida') return isFinite(parseFloat(v)) && parseFloat(v) > 0;
+  if (a === 'fxAuto') return typeof v === 'boolean';
+  if (a === 'fxTocado') return v === '' || esFecha(v);
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function aplicarAjustes(cambios) {
+  let toco = false;
+  cambios.forEach(c => {
+    if (c.type === 'removed') return;
+    const a = c.doc.id;
+    if (AJUSTES_SYNC.indexOf(a) < 0) return;
+    const k = 'ajustes/' + a, d = c.doc.data() || {};
+    const ts = +d.ts || 0;
+    if (ts <= (marcas[k] || 0)) return;
+    marcas[k] = ts;
+    if (!valeAjuste(a, d.d)) return;
+    S[a] = d.d;
+    huellas[k] = huella(d.d);
+    toco = true;
+    anota(d.por);
+  });
+  if (toco) tras();
+}
+
+function tras() {
+  guardarLocal();
+  guardarSincro();
+  if (primeraVuelta) return;
+  render();
+  avisarDeLoSuyo();
+}
+
+function anota(por) {
+  if (primeraVuelta || !por || por === quien) return;
+  hanTocado[por] = 1;
+}
+
+/* Un aviso por tanda, no uno por pieza: al volver de un rato sin cobertura
+   pueden entrar veinte cosas de golpe. */
+function avisarDeLoSuyo() {
+  const n = Object.keys(hanTocado);
+  if (!n.length) return;
+  clearTimeout(avisoPend);
+  avisoPend = setTimeout(() => {
+    const q = Object.keys(hanTocado);
+    hanTocado = {};
+    if (!q.length) return;
+    toast(q.join(' y ') + (q.length > 1 ? ' han apuntado cosas' : ' ha apuntado algo'));
+  }, 1200);
+}
+
+function falloEscucha(err) {
+  const c = err && err.code;
+  sincro = 'error';
+  sincroDetalle = c === 'revoked' ? 'te han quitado el acceso'
+    : c === 'resource_exhausted' ? 'demasiadas cosas a la vez'
+    : 'se ha cortado';
+  primeraVuelta = false;
+  pintarSincro();
+}
+
+/* ------------------------------ arranque ------------------------------ */
+
+async function arrancarSincro() {
+  cargarSincro();
+  let db = null;
+  try { db = await window.claude?.use?.('db'); } catch (e) {}
+  if (!db) { sincro = 'sola'; primeraVuelta = false; pintarSincro(); return; }
+
+  DB = db;
+  sincro = 'conectando';
+  pintarSincro();
+  escuchar();
+
+  // Al volver a la app, lo que quedó pendiente sale sin esperar a tocar nada.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') vaciarCola();
+  });
+  window.addEventListener('online', vaciarCola);
+}
+
+/* ------------------------------ lo que se ve ------------------------------ */
+
+function estadoSincro() {
+  if (sincro === 'sola') return { c: 'muted', t: 'Sólo en este móvil', s: 'Esta copia no está conectada con nadie' };
+  if (sincro === 'conectando') return { c: 'muted', t: 'Conectando…', s: 'Buscando lo que haya apuntado el otro' };
+  if (sincro === 'error') return { c: 'neg', t: 'Sin sincronizar', s: (sincroDetalle || 'se reintenta solo') + ' · no se pierde nada' };
+  const p = Object.keys(cola).length;
+  if (p) return { c: 'amber', t: 'Mandando…', s: p + (p === 1 ? ' cambio por subir' : ' cambios por subir') };
+  return { c: 'pos', t: 'Al día', s: quien ? 'Apuntas como ' + quien : 'Ponte un nombre' };
+}
+
+function tarjetaSincro() {
+  const e = estadoSincro();
+  return '<div class="card pad" style="display:flex;gap:11px;align-items:flex-start">' +
+    '<span style="flex:none;width:9px;height:9px;border-radius:50%;margin-top:6px;background:var(--' + e.c + ')"></span>' +
+    '<div class="row-main"><div class="row-t">' + esc(e.t) + '</div>' +
+    '<div class="row-s" style="white-space:normal">' + esc(e.s) + '</div></div></div>';
+}
+
+function sheetSincro() {
+  const compartido = 'agenda, pendientes, la lista de la compra, los gastos, el visado, la moto, las notas, los sitios y la rutina';
+  const cuerpo =
+    '<div id="sincroEstado" style="margin-bottom:14px">' + tarjetaSincro() + '</div>' +
+    (sincro === 'sola'
+      ? '<div class="note" style="margin-bottom:16px">Esta copia funciona sola: lo que apuntes se queda en este teléfono. ' +
+        'La versión compartida es la que abrís los dos desde el mismo enlace.</div>'
+      : campo('Tu nombre', '<input class="inp" id="sQuien" type="text" maxlength="20" placeholder="Pont" value="' + esc(quien) + '">') +
+        '<div class="note" style="margin:-4px 0 14px">Sirve para que salga quién ha apuntado cada cosa. Sólo lo ve el otro.</div>' +
+        '<button class="btn btn-p btn-w" id="sOk" style="padding:12px">Guardar</button>') +
+    '<div class="sec-h" style="margin-top:22px"><h2>Qué se comparte</h2></div>' +
+    '<div class="note">Se comparte todo: ' + compartido + '. Lo que apunte uno le sale al otro en unos segundos, sin recargar nada.</div>' +
+    '<div class="note" style="margin-top:10px"><b style="color:var(--ink)">Las fotos no se comparten.</b> ' +
+    'Pesan demasiado para viajar y se quedan en el móvil donde las hiciste. Guárdalas también en tu carrete.</div>' +
+    '<div class="sec-h" style="margin-top:22px"><h2>Si tocáis lo mismo a la vez</h2></div>' +
+    '<div class="note">Cada cosa viaja por separado. Si tú apuntas un gasto mientras el otro tacha la leche, ' +
+    'entran las dos. Sólo si los dos editáis <b style="color:var(--ink)">la misma ficha</b> a la vez gana el último que la tocó.</div>' +
+    '<div class="note" style="margin-top:10px">Sin cobertura sigue funcionando: lo que apuntes se queda esperando y sale solo en cuanto vuelvas a tener internet.</div>';
+
+  abrirSheet('Sincronización', cuerpo, () => {
+    const ok = $('#sOk');
+    if (!ok) return;
+    ok.onclick = () => {
+      const n = ($('#sQuien').value || '').trim().slice(0, 20);
+      quien = n;
+      guardarSincro();
+      cerrarSheet();
+      render();
+      toast(n ? 'Apuntas como ' + n : 'Nombre quitado');
+    };
+  });
+}
+
+function pintarSincro() {
+  if (vista === 'mas') renderMas();
+  const caja = $('#sincroEstado');
+  if (caja) caja.innerHTML = tarjetaSincro();
+}
+
 
 /* ---------------------------- fechas ---------------------------- */
 
@@ -1139,6 +1526,7 @@ const ICONOS = {
   racha:   '<path d="M12 22c4 0 7-2.8 7-6.5 0-4.5-4-6-4-9.5 0 0-3 1.5-3 5 0-1.5-1-3-2-3.5 0 2-3 3.5-3 8C7 19.2 8 22 12 22z"/>',
   ajustes: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle cx="9" cy="6.5" r="2.1"/><circle cx="15.5" cy="12" r="2.1"/><circle cx="8" cy="17.5" r="2.1"/>',
   aviso:   '<path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.5v.01"/>',
+  sincro:  '<path d="M20.5 11A8.5 8.5 0 0 0 6 5.8L3.5 8.4"/><path d="M3.5 4.2v4.2h4.2"/><path d="M3.5 13A8.5 8.5 0 0 0 18 18.2l2.5-2.6"/><path d="M20.5 19.8v-4.2h-4.2"/>',
   casa:    '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.5"/>'
 };
 
@@ -2234,9 +2622,16 @@ function renderMas() {
 
   const c = semanaComida();
   const v = visadoInfo();
+  const es = estadoSincro();
   $('#masResumen').innerHTML =
     secH('ajustes', 'muted', 'La app') +
     '<div class="card">' +
+      '<button class="row" style="width:100%;text-align:left" data-sheet="sincro">' +
+        '<span style="color:var(--' + es.c + ');display:flex;flex:none">' + ico('sincro', 17) + '</span>' +
+        '<div class="row-main"><div class="row-t">Sincronización</div>' +
+        '<div class="row-s">' + esc(es.t + ' · ' + es.s) + '</div></div>' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" style="color:var(--muted);flex:none"><path d="m9 18 6-6-6-6"/></svg>' +
+      '</button>' +
       '<button class="row" style="width:100%;text-align:left" data-sheet="visado">' +
         '<span style="color:var(--muted);display:flex;flex:none">' + ico('visado', 17) + '</span>' +
         '<div class="row-main"><div class="row-t">Visado</div>' +
@@ -3020,7 +3415,9 @@ function sheetBienvenida() {
     '<div class="row-s" style="white-space:normal;margin-top:2px">' + d + '</div></div></div>';
 
   const cuerpo =
-    '<div class="note" style="margin-bottom:14px">Cuatro pestañas abajo, nada más. Todo lo que apuntes se queda en este móvil: no hay cuenta, ni contraseña, ni nadie mirando.</div>' +
+    '<div class="note" style="margin-bottom:14px">Cinco pestañas abajo, nada más. ' + (sincro === 'sola'
+      ? 'Lo que apuntes se queda en este móvil: no hay cuenta, ni contraseña, ni nadie mirando.'
+      : 'Lo que apunte uno le sale al otro en unos segundos. Sin cobertura se queda esperando y sale solo al volver.') + '</div>' +
     punto('Hoy', 'Lo importante del día: visado, el tiempo, tu rutina, lo que llevas gastado y lo que tienes apuntado.') +
     punto('Agenda', 'Tu calendario. Las cosas pueden repetirse cada semana o cada mes.') +
     punto('Compra', 'Escribes «arroz» y te lo pone con su nombre en indonesio, su precio y dónde comprarlo. El <b>modo mercado</b> te lo enseña grande para enseñárselo al vendedor y te avisa si te están cobrando de más.') +
@@ -3161,6 +3558,36 @@ function sheetConversor() {
   });
 }
 
+/* --- pegar una copia ---
+   En el móvil, pasar un archivo de una app a otra es un lío. Copiar y pegar
+   un texto, no. Es el camino para traerse lo de la versión antigua. */
+
+function sheetPegar() {
+  const cuerpo =
+    '<div class="note" style="margin-bottom:10px">En la app antigua entra en <b style="color:var(--ink)">Ajustes → Copiar datos al portapapeles</b>, vuelve aquí y pega.</div>' +
+    '<textarea class="inp" id="pgTxt" style="min-height:150px" placeholder="Pega aquí lo que hayas copiado"></textarea>' +
+    '<button class="btn btn-p btn-w" id="pgOk" style="margin-top:12px;padding:12px">Restaurar</button>' +
+    '<div class="note" style="margin-top:10px">Sustituye lo que haya ahora mismo' +
+    (sincro === 'sola' ? '' : ' — y como estáis sincronizados, también en el móvil del otro') + '. ' +
+    'Las fotos no viajan en la copia.</div>';
+
+  abrirSheet('Pegar una copia', cuerpo, () => {
+    $('#pgOk').onclick = () => {
+      const txt = ($('#pgTxt').value || '').trim();
+      if (!txt) { $('#pgTxt').focus(); return; }
+      let d;
+      try { d = JSON.parse(txt); } catch (e) { toast('Eso no parece una copia'); return; }
+      if (!d || typeof d !== 'object' || Array.isArray(d)) { toast('Eso no parece una copia'); return; }
+      S = sanear(d);
+      S.visto = true;
+      guardarYa();
+      cerrarSheet();
+      render();
+      toast('Restaurados ' + S.movs.length + ' movimientos');
+    };
+  });
+}
+
 /* --- ajustes --- */
 
 function sheetAjustes() {
@@ -3178,13 +3605,16 @@ function sheetAjustes() {
     '<div class="note" style="margin:-4px 0 16px">Ahora mismo son ' + fmtEUR(idrAeur(S.presupuestoComida)) + ' a la semana.</div>' +
     '<button class="btn btn-p btn-w" id="aOk" style="padding:12px">Guardar ajustes</button>' +
     '<div class="sec-h" style="margin-top:22px"><h2>Tus datos</h2></div>' +
-    '<div class="note" style="margin-bottom:10px">Todo vive dentro de tu móvil, nadie más lo ve. Haz copia de vez en cuando: si borras el navegador o cambias de teléfono, se pierde. ' +
+    '<div class="note" style="margin-bottom:10px">' + (sincro === 'sola'
+      ? 'Todo vive dentro de este móvil. Haz copia de vez en cuando: si borras el navegador o cambias de teléfono, se pierde. '
+      : 'Lo vuestro se guarda junto y en este móvil queda una copia, por eso la app abre sin internet. Aun así, una copia de seguridad de vez en cuando no sobra. ') +
     '<b style="color:var(--ink)">Las fotos no entran en la copia</b> (pesan demasiado); ésas guárdalas también en tu carrete.</div>' +
     '<button class="btn btn-w" id="aExp">Descargar copia de seguridad</button>' +
     '<button class="btn btn-w" id="aCsv" style="margin-top:8px">Descargar mis gastos en Excel</button>' +
     '<button class="btn btn-w" id="aCopy" style="margin-top:8px">Copiar datos al portapapeles</button>' +
-    '<label class="btn btn-w" style="margin-top:8px">Restaurar desde una copia' +
+    '<label class="btn btn-w" style="margin-top:8px">Restaurar desde un archivo' +
       '<input type="file" id="aImp" accept="application/json,.json" style="display:none"></label>' +
+    '<button class="btn btn-w" id="aPegar" style="margin-top:8px">Pegar una copia</button>' +
     '<div class="note" style="margin-top:16px">' + (almacenOK
       ? 'Guardado automático: <b style="color:var(--pos)">funcionando</b>.'
       : '<b style="color:var(--neg)">Ojo:</b> este navegador no me deja guardar nada. Los cambios se perderán al cerrar. Prueba a abrirlo fuera del modo privado.') + '</div>' +
@@ -3215,8 +3645,9 @@ function sheetAjustes() {
     };
     $('#aExp').onclick = exportar;
     $('#aCsv').onclick = exportarCsv;
+    $('#aPegar').onclick = sheetPegar;
     $('#aUpd').onclick = async () => {
-      if (!regSW) { toast('Ábrela desde la pantalla de inicio para esto'); return; }
+      if (!regSW) { toast('Esta copia se pone al día sola al abrirla'); return; }
       toast('Mirando…');
       try {
         await regSW.update();
@@ -3250,6 +3681,7 @@ function sheetAjustes() {
     $('#aWipe').onclick = () => {
       confirmar('¿Borrar todo?',
         'Se va la agenda, los pendientes, la lista de la compra y todo el dinero apuntado. ' +
+        (sincro === 'sola' ? '' : 'Y como estáis sincronizados, se va también del móvil del otro. ') +
         'Esto no se puede deshacer — si acaso, descarga antes una copia de seguridad.',
         'Sí, borrar todo', () => {
           S = DEFAULTS(); S.visto = true; guardarYa(); render(); toast('Todo limpio');
@@ -3482,6 +3914,7 @@ function arrancar() {
       if (s === 'frases') sheetFrases(null);
       if (s === 'habitos') sheetHabitos();
       if (s === 'tiempo') sheetTiempo();
+      if (s === 'sincro') sheetSincro();
       if (s === 'bienvenida') sheetBienvenida();
       return;
     }
@@ -3592,6 +4025,8 @@ function arrancar() {
 
   // Lo de internet va después de pintar y nunca bloquea: si no hay cobertura,
   // la app funciona igual con los últimos datos que guardó.
+  arrancarSincro();
+
   refrescarDeInternet();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') refrescarDeInternet();
