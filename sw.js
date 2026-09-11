@@ -1,85 +1,39 @@
-/* Bali Harian - service worker. Version: 20260824-193402
-   Guarda la app entera para que abra sin conexion. */
-var CACHE = 'bali-harian-20260824-193402';
-var ESENCIALES = [
-  './', './index.html', './manifest.webmanifest',
-  './icon-180.png', './icon-192.png', './icon-512.png',
-  './icon-maskable-512.png', './favicon.png'
-];
+/* Bali Harian - service worker de retirada. Version: 20260911-mudanza
+ *
+ * El de antes guardaba la app entera para que abriera sin internet. Ahora la
+ * app vive en otra direccion y esta copia solo ensena el aviso de la mudanza,
+ * asi que lo que hacia falta es justo lo contrario: soltar lo guardado y darse
+ * de baja. Si se quedara, el movil podria seguir sirviendo la app vieja desde
+ * su memoria y nadie entenderia por que sigue ahi.
+ *
+ * Se deja el fichero en su sitio (en vez de borrarlo) para que los navegadores
+ * que ya lo tienen registrado se encuentren esta version y se retiren. Un 404
+ * tambien da de baja al worker en los navegadores modernos, pero no limpia lo
+ * que ya estaba guardado.
+ */
 
-/* Las tipografias vienen de Google. Si esperamos a que se pidan solas, la
-   primera visita las deja fuera y sin cobertura se veria con otra letra.
-   Asi que en la instalacion se leen del CSS y se guardan tambien. */
-function guardarTipografias(cache) {
-  var css = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&display=swap';
-  return fetch(css).then(function (r) {
-    if (!r.ok) return;
-    return cache.put(css, r.clone()).then(function () {
-      return r.text();
-    }).then(function (txt) {
-      var urls = txt.match(/https:\/\/fonts\.gstatic\.com\/[^)]+/g) || [];
-      var unicas = urls.filter(function (u, i) { return urls.indexOf(u) === i; });
-      return Promise.all(unicas.map(function (u) {
-        return fetch(u).then(function (f) { if (f.ok) return cache.put(u, f); }).catch(function () {});
-      }));
-    });
-  }).catch(function () { /* sin conexion se guardaran mas adelante */ });
-}
-
-/* Sin skipWaiting: la version nueva espera y la app avisa al usuario. Asi no se
-   le cambia la pantalla de debajo de las manos mientras esta apuntando algo. */
-self.addEventListener('install', function (e) {
-  e.waitUntil(
-    caches.open(CACHE).then(function (c) {
-      return c.addAll(ESENCIALES).then(function () { return guardarTipografias(c); });
-    })
-  );
+self.addEventListener('install', function () {
+  self.skipWaiting();   // aqui no hay nada que se pueda estropear por ir deprisa
 });
 
-// La app pide el cambio cuando el usuario toca "Actualizar".
 self.addEventListener('message', function (e) {
-  if (e.data === 'actualiza') self.skipWaiting();
+  if (e.data === 'actualiza') self.skipWaiting();   // la app vieja pide el relevo asi
 });
 
 self.addEventListener('activate', function (e) {
   e.waitUntil(
-    caches.keys().then(function (ks) {
-      return Promise.all(ks.map(function (k) { if (k !== CACHE) return caches.delete(k); }));
-    }).then(function () { return self.clients.claim(); })
-  );
-});
-
-self.addEventListener('fetch', function (e) {
-  var req = e.request;
-  if (req.method !== 'GET') return;
-
-  // La pagina: primero la red (para traer novedades), y si no hay, la copia guardada.
-  if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req).then(function (r) {
-        var copia = r.clone();
-        caches.open(CACHE).then(function (c) { c.put('./index.html', copia); });
-        return r;
-      }).catch(function () {
-        return caches.match('./index.html').then(function (h) {
-          return h || caches.match('./');
-        });
+    caches.keys()
+      .then(function (ks) {
+        return Promise.all(ks.map(function (k) { return caches.delete(k); }));
       })
-    );
-    return;
-  }
-
-  // Lo demas (iconos, tipografias): primero lo guardado, que es instantaneo.
-  e.respondWith(
-    caches.match(req).then(function (hit) {
-      if (hit) return hit;
-      return fetch(req).then(function (r) {
-        if (r && (r.ok || r.type === 'opaque')) {
-          var copia = r.clone();
-          caches.open(CACHE).then(function (c) { c.put(req, copia); });
-        }
-        return r;
-      }).catch(function () { return hit; });
-    })
+      .then(function () { return self.registration.unregister(); })
+      .then(function () { return self.clients.matchAll({ type: 'window' }); })
+      .then(function (cs) {
+        // Las pantallas abiertas se recargan solas y caen en el aviso.
+        cs.forEach(function (c) { c.navigate(c.url); });
+      })
+      .catch(function () { /* si algo falla, la pagina insiste por su cuenta */ })
   );
 });
+
+/* Sin 'fetch': todo va a la red, como en cualquier pagina normal. */
